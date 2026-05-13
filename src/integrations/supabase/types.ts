@@ -14,7 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      deployed_apps: {
+        Row: {
+          config_vars: Json | null
+          created_at: string
+          heroku_app_name: string
+          heroku_app_url: string | null
+          id: string
+          password: string
+          repo_url: string
+        }
+        Insert: {
+          config_vars?: Json | null
+          created_at?: string
+          heroku_app_name: string
+          heroku_app_url?: string | null
+          id: string
+          password: string
+          repo_url: string
+        }
+        Update: {
+          config_vars?: Json | null
+          created_at?: string
+          heroku_app_name?: string
+          heroku_app_url?: string | null
+          id?: string
+          password?: string
+          repo_url?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
