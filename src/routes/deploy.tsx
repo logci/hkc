@@ -276,7 +276,3 @@ function CredBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-// Hook helper to call useServerFn inside async loops (component-level)
-function useServerFnLazy<T extends (...a: any) => any>(fn: T): T {
-  return useServerFn(fn) as any;
-}
