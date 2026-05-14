@@ -115,6 +115,33 @@ function DeployPage() {
         <main className="mx-auto max-w-4xl px-6 py-12">
           <DeployingAnimation status={status} appName={result.appName} />
 
+          {meta && (
+            <div className="mt-6 grid sm:grid-cols-2 gap-4">
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <div className="text-xs text-muted-foreground mb-2">Dynos (read-only during deploy)</div>
+                <ul className="space-y-1 text-sm mono">
+                  {meta.dynos?.map((d: any) => (
+                    <li key={d.type} className="flex justify-between">
+                      <span>{d.type}</span>
+                      <span className="text-muted-foreground">{d.size} × {d.quantity}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <div className="text-xs text-muted-foreground mb-2">Add-ons</div>
+                {meta.addons?.length ? (
+                  <ul className="space-y-1 text-sm mono">
+                    {meta.addons.map((a: any, i: number) => (
+                      <li key={i}>{a.plan}{a.as ? ` (${a.as})` : ""}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-sm text-muted-foreground">No add-ons.</div>
+                )}
+              </div>
+            </div>
+          )}
           {(status === "succeeded" || status === "failed") && (
             <div className="mt-6 rounded-2xl border border-border bg-card p-6 animate-fade-in">
               {status === "succeeded" ? (
