@@ -26,12 +26,119 @@ export const inspectRepo = createServerFn({ method: "POST" })
       required: v?.required !== false,
       generator: v?.generator || null,
     }));
+    const formation = appJson?.formation || {};
+    const dynos = Object.entries(formation).map(([type, v]: [string, any]) => ({
+      type,
+      quantity: v?.quantity ?? 1,
+      size: v?.size || "eco",
+    }));
+    if (dynos.length === 0) dynos.push({ type: "web", quantity: 1, size: "eco" });
+    const addonsRaw = appJson?.addons || [];
+    const addons = addonsRaw.map((a: any) =>
+      typeof a === "string" ? { plan: a } : { plan: a?.plan, as: a?.as },
+    );
     return {
       repo: info,
       appName: appJson?.name || `${info.owner}/${info.repo}`,
       description: appJson?.description || "",
       vars,
+      dynos,
+      addons,
     };
+  });
+
+// Get live dyno formation + addons for an app (auth via id+password)
+export const getAppDetails = createServerFn({ method: "POST" })
+  .inputValidator((d) =>
+    z.object({ id: z.string(), password: z.string() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { data: row, error } = await supabaseAdmin
+      .from("deployed_apps")
+      .select("*")
+      .eq("id", data.id.toLowerCase())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row || row.password !== data.password) throw new Error("Invalid credentials");
+
+    const [fRes, aRes] = await Promise.all([
+      fetch(`${HEROKU_API}/apps/${row.heroku_app_name}/formation`, { headers: herokuHeaders() }),
+      fetch(`${HEROKU_API}/apps/${row.heroku_app_name}/addons`, { headers: herokuHeaders() }),
+    ]);
+    const formation = fRes.ok ? await fRes.json() : [];
+    const addons = aRes.ok ? await aRes.json() : [];
+    return {
+      dynos: (formation as any[]).map((f) => ({
+        type: f.type,
+        quantity: f.quantity,
+        size: f.size,
+      })),
+      addons: (addons as any[]).map((a) => ({
+        name: a.name,
+        plan: a?.plan?.name || a?.addon_service?.name,
+        state: a.state,
+      })),
+    };
+  });
+
+// Scale dyno: change size and/or quantity
+export const scaleDyno = createServerFn({ method: "POST" })
+  .inputValidator((d) =>
+    z
+      .object({
+        id: z.string(),
+        password: z.string(),
+        type: z.string().min(1).max(40),
+        size: z.enum(["eco", "basic", "standard-1X", "standard-2X"]),
+        quantity: z.number().int().min(0).max(10),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { data: row, error } = await supabaseAdmin
+      .from("deployed_apps")
+      .select("*")
+      .eq("id", data.id.toLowerCase())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row || row.password !== data.password) throw new Error("Invalid credentials");
+
+    const res = await fetch(
+      `${HEROKU_API}/apps/${row.heroku_app_name}/formation/${data.type}`,
+      {
+        method: "PATCH",
+        headers: herokuHeaders(),
+        body: JSON.stringify({ size: data.size, quantity: data.quantity }),
+      },
+    );
+    if (!res.ok) throw new Error(`Scale failed: ${await res.text()}`);
+    const f = await res.json();
+    return { type: f.type, size: f.size, quantity: f.quantity };
+  });
+
+// Delete app from Heroku and our DB
+export const deleteApp = createServerFn({ method: "POST" })
+  .inputValidator((d) =>
+    z.object({ id: z.string(), password: z.string() }).parse(d),
+  )
+  .handler(async ({ data }) => {
+    const { data: row, error } = await supabaseAdmin
+      .from("deployed_apps")
+      .select("*")
+      .eq("id", data.id.toLowerCase())
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!row || row.password !== data.password) throw new Error("Invalid credentials");
+
+    const res = await fetch(`${HEROKU_API}/apps/${row.heroku_app_name}`, {
+      method: "DELETE",
+      headers: herokuHeaders(),
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`Delete failed: ${await res.text()}`);
+    }
+    await supabaseAdmin.from("deployed_apps").delete().eq("id", row.id);
+    return { ok: true };
   });
 
 // 2. Deploy: create heroku app, set vars, trigger build from tarball
