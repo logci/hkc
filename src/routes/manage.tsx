@@ -302,6 +302,100 @@ function ManagePage() {
           </pre>
         </section>
 
+        <section className="mt-8 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-lg font-semibold">Dyno scaling</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Choose a tier and quantity per process type. Heroku will restart that process.
+          </p>
+          {dynos.length === 0 ? (
+            <div className="mt-4 text-sm text-muted-foreground">
+              No dyno formation found yet. Try refreshing after the first deploy completes.
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {dynos.map((d, idx) => (
+                <div
+                  key={d.type}
+                  className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-border p-3"
+                >
+                  <div className="mono text-sm w-20">{d.type}</div>
+                  <select
+                    value={d.size}
+                    onChange={(e) => {
+                      const n = [...dynos];
+                      n[idx] = { ...d, size: e.target.value as DynoSize };
+                      setDynos(n);
+                    }}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    {DYNO_SIZES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={d.quantity}
+                    onChange={(e) => {
+                      const n = [...dynos];
+                      n[idx] = { ...d, quantity: Math.max(0, Math.min(10, Number(e.target.value) || 0)) };
+                      setDynos(n);
+                    }}
+                    className="w-20 rounded-lg border border-border bg-background px-3 py-2 text-sm mono"
+                  />
+                  <button
+                    onClick={() => handleScale(idx)}
+                    disabled={scaleBusy === d.type}
+                    className="sm:ml-auto rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                  >
+                    {scaleBusy === d.type ? "Scaling…" : "Apply"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-lg font-semibold">Add-ons</h2>
+          {addons.length === 0 ? (
+            <div className="mt-3 text-sm text-muted-foreground">No add-ons attached.</div>
+          ) : (
+            <ul className="mt-3 space-y-2 text-sm mono">
+              {addons.map((a) => (
+                <li key={a.name} className="flex justify-between border-b border-border pb-2 last:border-0">
+                  <span>{a.plan}</span>
+                  <span className="text-muted-foreground">{a.state}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-destructive/40 bg-destructive/5 p-5">
+          <h2 className="text-lg font-semibold text-destructive">Danger zone</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Permanently delete <span className="mono">{app.appName}</span> from Heroku. This cannot be undone.
+            Type the app name to confirm.
+          </p>
+          <div className="mt-4 flex flex-col sm:flex-row gap-2">
+            <input
+              value={confirmDelete}
+              onChange={(e) => setConfirmDelete(e.target.value)}
+              placeholder={app.id}
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm mono outline-none"
+            />
+            <button
+              onClick={handleDelete}
+              disabled={busy || confirmDelete !== app.id}
+              className="rounded-lg bg-destructive text-destructive-foreground px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {busy ? "Deleting…" : "Delete app"}
+            </button>
+          </div>
+        </section>
+
         {err && <div className="mt-4 text-destructive text-sm">{err}</div>}
       </main>
       <Footer />
