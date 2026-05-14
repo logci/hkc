@@ -1,10 +1,20 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
 import { z } from "zod";
-import { fetchAppLogs, loginApp, updateAppVars } from "@/lib/heroku.functions";
+import {
+  fetchAppLogs,
+  loginApp,
+  updateAppVars,
+  getAppDetails,
+  scaleDyno,
+  deleteApp,
+} from "@/lib/heroku.functions";
 import { Nav, Footer } from "./index";
 import { ConnectingOverlay } from "@/components/connecting-overlay";
+
+const DYNO_SIZES = ["eco", "basic", "standard-1X", "standard-2X"] as const;
+type DynoSize = (typeof DYNO_SIZES)[number];
 
 export const Route = createFileRoute("/manage")({
   validateSearch: z.object({ id: z.string().optional() }),
@@ -14,9 +24,13 @@ export const Route = createFileRoute("/manage")({
 
 function ManagePage() {
   const { id: prefillId } = Route.useSearch();
+  const navigate = useNavigate();
   const login = useServerFn(loginApp);
   const update = useServerFn(updateAppVars);
   const fetchLogs = useServerFn(fetchAppLogs);
+  const getDetails = useServerFn(getAppDetails);
+  const scale = useServerFn(scaleDyno);
+  const remove = useServerFn(deleteApp);
 
   const [id, setId] = useState(prefillId || "");
   const [password, setPassword] = useState("");
@@ -28,6 +42,26 @@ function ManagePage() {
   const [busy, setBusy] = useState(false);
   const [logs, setLogs] = useState("");
   const [savedAt, setSavedAt] = useState<string>("");
+  const [dynos, setDynos] = useState<{ type: string; size: DynoSize; quantity: number }[]>([]);
+  const [addons, setAddons] = useState<{ name: string; plan: string; state: string }[]>([]);
+  const [confirmDelete, setConfirmDelete] = useState("");
+  const [scaleBusy, setScaleBusy] = useState<string>("");
+
+  async function loadDetails(appId: string, pw: string) {
+    try {
+      const d = await getDetails({ data: { id: appId, password: pw } });
+      setDynos(
+        (d.dynos || []).map((x: any) => ({
+          type: x.type,
+          size: (DYNO_SIZES.includes(x.size) ? x.size : "eco") as DynoSize,
+          quantity: x.quantity ?? 1,
+        })),
+      );
+      setAddons(d.addons || []);
+    } catch {
+      // ignore — details are optional
+    }
+  }
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -37,9 +71,41 @@ function ManagePage() {
       const r = await login({ data: { id: id.toLowerCase(), password } });
       setApp(r);
       setVars(Object.entries(r.configVars).map(([k, v]) => ({ key: k, value: String(v) })));
+      await loadDetails(r.id, password);
     } catch (e: any) {
       setErr(e.message || "Login failed");
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleScale(idx: number) {
+    const d = dynos[idx];
+    setScaleBusy(d.type);
+    setErr("");
+    try {
+      const r = await scale({
+        data: { id: app.id, password, type: d.type, size: d.size, quantity: d.quantity },
+      });
+      const next = [...dynos];
+      next[idx] = { type: r.type, size: r.size as DynoSize, quantity: r.quantity };
+      setDynos(next);
+    } catch (e: any) {
+      setErr(e.message || "Scale failed");
+    } finally {
+      setScaleBusy("");
+    }
+  }
+
+  async function handleDelete() {
+    if (confirmDelete !== app.id) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await remove({ data: { id: app.id, password } });
+      navigate({ to: "/" });
+    } catch (e: any) {
+      setErr(e.message || "Delete failed");
       setBusy(false);
     }
   }
@@ -234,6 +300,100 @@ function ManagePage() {
           <pre className="mt-4 mono text-xs bg-foreground text-background rounded-xl p-4 max-h-[50vh] overflow-auto whitespace-pre-wrap">
 {logs || "Click 'Fetch logs' to view recent output."}
           </pre>
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-lg font-semibold">Dyno scaling</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Choose a tier and quantity per process type. Heroku will restart that process.
+          </p>
+          {dynos.length === 0 ? (
+            <div className="mt-4 text-sm text-muted-foreground">
+              No dyno formation found yet. Try refreshing after the first deploy completes.
+            </div>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {dynos.map((d, idx) => (
+                <div
+                  key={d.type}
+                  className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-border p-3"
+                >
+                  <div className="mono text-sm w-20">{d.type}</div>
+                  <select
+                    value={d.size}
+                    onChange={(e) => {
+                      const n = [...dynos];
+                      n[idx] = { ...d, size: e.target.value as DynoSize };
+                      setDynos(n);
+                    }}
+                    className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    {DYNO_SIZES.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={d.quantity}
+                    onChange={(e) => {
+                      const n = [...dynos];
+                      n[idx] = { ...d, quantity: Math.max(0, Math.min(10, Number(e.target.value) || 0)) };
+                      setDynos(n);
+                    }}
+                    className="w-20 rounded-lg border border-border bg-background px-3 py-2 text-sm mono"
+                  />
+                  <button
+                    onClick={() => handleScale(idx)}
+                    disabled={scaleBusy === d.type}
+                    className="sm:ml-auto rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                  >
+                    {scaleBusy === d.type ? "Scaling…" : "Apply"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-border bg-card p-5">
+          <h2 className="text-lg font-semibold">Add-ons</h2>
+          {addons.length === 0 ? (
+            <div className="mt-3 text-sm text-muted-foreground">No add-ons attached.</div>
+          ) : (
+            <ul className="mt-3 space-y-2 text-sm mono">
+              {addons.map((a) => (
+                <li key={a.name} className="flex justify-between border-b border-border pb-2 last:border-0">
+                  <span>{a.plan}</span>
+                  <span className="text-muted-foreground">{a.state}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-2xl border border-destructive/40 bg-destructive/5 p-5">
+          <h2 className="text-lg font-semibold text-destructive">Danger zone</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Permanently delete <span className="mono">{app.appName}</span> from Heroku. This cannot be undone.
+            Type the app name to confirm.
+          </p>
+          <div className="mt-4 flex flex-col sm:flex-row gap-2">
+            <input
+              value={confirmDelete}
+              onChange={(e) => setConfirmDelete(e.target.value)}
+              placeholder={app.id}
+              className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm mono outline-none"
+            />
+            <button
+              onClick={handleDelete}
+              disabled={busy || confirmDelete !== app.id}
+              className="rounded-lg bg-destructive text-destructive-foreground px-4 py-2 text-sm font-medium disabled:opacity-50"
+            >
+              {busy ? "Deleting…" : "Delete app"}
+            </button>
+          </div>
         </section>
 
         {err && <div className="mt-4 text-destructive text-sm">{err}</div>}
